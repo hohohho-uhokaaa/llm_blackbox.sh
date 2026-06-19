@@ -36,6 +36,7 @@ chmod +x ./llm_blackbox.sh
 ```
 
 初回実行時、必要なパッケージ（lm_sensors, sysstat）が自動的にインストールされます。
+cron登録後はOS起動時にシステム状態の収集、csvファイルへの追記が開始され、その後、2秒スリープして実行を30回繰り返し続けます。
 
 ### 3. cronへの登録
 
@@ -46,7 +47,7 @@ crontab -e
 以下の行を追加してください（パスは実際の環境に合わせて変更）：
 
 ```cron
-* * * * * /home/あなたのユーザー名/llm_blackbox.sh > /home/あなたのユーザー名/llm_blackbox.csv 2>&1
+@reboot /home/あなたのユーザー名/llm_blackbox.sh > 2>&1
 ```
 
 ユーザー名は `pwd` コマンドで確認できます。
@@ -118,7 +119,6 @@ journalctl -b -1 -g "(ollama|vscode-ide|Out of memory|thermal|Xid|amdgpu)" --no-
 ## Linuxユニバーサル仕様
 
 このスクリプトは、特定のOSの深い部分（Fedora固有の dnf の仕組みなど）には一切依存せず、Linuxカーネルが吐き出す標準的な数値（/proc の情報）を拾っているだけです。
-
 そのため、Fedora から Ubuntu に持っていっても、あるいは将来の新しいバージョンのOSに変えたとしても、ほぼ永久にそのまま使い回せる「一生モノのブラックボックスロガー」になっています。
 
 ### 共通コマンド
@@ -154,16 +154,3 @@ Alpine Linuxでは `apk`、Arch Linuxでは `pacman` を使用してパッケー
 ## ライセンス
 
 MITライセンスとしてご利用ください
-
-
-
-
-
-
-
-
-
-
-
-
-
