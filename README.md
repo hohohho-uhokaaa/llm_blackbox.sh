@@ -47,7 +47,7 @@ crontab -e
 以下の行を追加してください（パスは実際の環境に合わせて変更）：
 
 ```cron
-@reboot /home/あなたのユーザー名/llm_blackbox.sh > 2>&1
+* * * * * /home/あなたのユーザー名/llm_blackbox.sh > 2>&1
 ```
 
 ユーザー名は `pwd` コマンドで確認できます。
