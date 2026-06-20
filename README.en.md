@@ -250,3 +250,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Other
+
+My home PC is a Ryzen 5 2400G with 16GB memory - a rather weak machine running Fedora 44. On this setup, I run VSCode, Continue, Ollama, and qwen2.5-coder:7b for local LLM. When running inference, the context explodes, exceeding memory and swap limits, causing massive thrashing, and CPU usage hits the ceiling, making the system unresponsive. At this time, the SSD is probably being abused quite heavily, and its lifespan is likely being rapidly depleted. This script was originally intended to explore what the upper limit of Continue's context size is, but it seemed interesting so I made it runnable with cron for enjoyment. Since it's every 2 seconds, it's unusually detailed, but the information is rough - I think it's a specification that enthusiasts can enjoy watching and be satisfied with.

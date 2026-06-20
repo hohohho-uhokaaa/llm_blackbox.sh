@@ -260,3 +260,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## その他
+自宅のPCはRyzen 5 2400G 16GBメモリのポンコツでfedora 44 こいつでvscode、continue、ollama、qwen2.5-coder:7bでローカルLLMを動かしていますが、推論させるとコンテキストが爆増してメモリ、スワップとも限界突破で大量のスラッシングが発生、cpu使用率も天井でシステムが応答しなくなります。このときSSDはおそらくかなり酷使されているはずで、爆速で寿命が削られているにちがいありません。このスクリプトはcontinueのコンテキストサイズはどれくらいの値が上限かを探るためのものだったのですが面白そうなのでcronで楽しめるようにしてみました。2秒ごとなので異様に細かくて、でも情報は雑ですが、ヲタク的には眺めていて満足できて楽しめる仕様ではないかと思います。
+
