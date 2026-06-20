@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 
+set -e
+
 # ==============================================================================
-# 🤖【Gemini 分析時の注意事項】
-# 1. ログ採取時間は15分〜30分（約900行）を目安にすると、最高に綺麗なグラフになる。
-# 2. もしPCがハングアップ（強制終了）した場合は、再起動後にこのCSVの「最末尾」を
-#    そのままGeminiに投げれば、死ぬ2秒前までの惨状を分析できる。
-# 3. 精度を極限まで高めたい時は、以下のFedora/Ubuntuシステムログ（死ぬ直前の数十行）も
-#    一緒にテキストでコピペしてGeminiに渡すと、完璧な答え合わせができる。
-#    👉 コマンド: journalctl -b -1 -g "(ollama|vscode-ide|Out of memory|thermal|Xid|amdgpu)" --no-pager
-# 4. 46行目の「あなたのユーザー名」を、実際のユーザー名に置き換えてから実行してください。
-# 📋【Gemini への最強分析依頼プロンプト】(ここから下をコピーしてGeminiに投げる)
-# 以下のプロンプトをコピペして $HOME/llm_blackbox_rich.csv を geminiのプロンプト入力欄に
-# ドラッグして放り込んで丸投げすると、以下の3点を実行してくれる。
-# 
-# ↓以下プロンプト
-# ------------------------------------------------------------------------------
+# 設計方針
+# ==============================================================================
+# - バックグラウンドで常時実行（無限ループ）cronに@rebootで登録する
+# - 5分間2秒間隔でシステムリソースを収集を無限ループ
+# - 二重起動を防止（重複実行によるリソース浪費を防止）
+# - シェルからスクリプト実行時はctrl+cで安全に終了
+# ==============================================================================
+
+# ==============================================================================
+# 使い方
+# ==============================================================================
+# 1. 実行権限を付与: chmod +x ./llm_blackbox.sh
+# 2. 初回実行で必要なパッケージを自動インストール: ./llm_blackbox.sh
+# 3. CSV_FILEの「あなたのユーザー名」を実際のユーザー名に置換
+# 4. バックグラウンドで実行: nohup ./llm_blackbox.sh > /dev/null 2>&1 &
+# 5. 停止: pkill -f llm_blackbox.sh
+# ==============================================================================
+
+# ==============================================================================
+# Gemini分析用プロンプト（以下をコピーして使用）
+# ==============================================================================
 # 添付のCSVは、ローカルLLM（Ollama/Qwen）を実行してPCに負荷をかけていた時の
 # システムの健康状態を2秒ごとに記録したブラックボックスログです。
 # 以下の3点を実行し、エンジニア視点で詳細なレポートを作成してください。
@@ -27,37 +36,34 @@
 #    （メモリ不足、スワップ地獄、熱暴走、グラフィックエラーなど）をプロファイリングし、
 #    今後快適にローカルLLMを回すための具体的な自衛策（対策）を提案してください。
 #    スワップ地獄が観察された場合はSSDの寿命に関する警告や情報がわかれば併せて教えてください。
-# ------------------------------------------------------------------------------
-# ↑プロンプトここまで
-#
 # ==============================================================================
-# 4. 使い方
-# cron に登録する前に chmod +x ./llm_blackbox.sh として、スクリプトにシェルでの実行権を
-# 付け、その後に ./llm_blackbox.sh を1回だけ実行すると、必要なコマンドが自動でインストール
-# されます。 その後、このスクリプトを cron に登録しておくと、2秒ごとにシステムの健康状態を
-# 自動で記録し続けます。
-# cron の登録は crontab -e で開き、以下の1行を追加してください。
-# @reboot while true; do /home/あなたのユーザー名/llm_blackbox.sh; sleep 1; done > /dev/null 2>&1
-# (※「あなたのユーザー名」の部分は実際のFedoraやUbuntuのユーザー名に変えてください。
-# pwd コマンドで確認できます)
-#
+
 # ==============================================================================
 # 設定
 CSV_FILE="/home/あなたのユーザー名/llm_blackbox_rich.csv"
-# ------------------------------------------------------------------------------
-# 🛠️【1. 二重起動防止の防壁】
-# ------------------------------------------------------------------------------
-# すでにこのスクリプトがバックグラウンドで動いている場合は、重複して走らないように即終了
-#if pgrep -f "$(basename "$0")" | grep -v $$ > /dev/null; then
-#    exit 0
-#fi
-# ↑ この方式だと、cronで毎分実行されるときに、前の1分間のプロセスがまだ残っている場合に
-#    二重起動を防げないので、cronでの実行時はこのスクリプトの二重起動防止は無効化しておく。
-#    cron ムズい
-# ------------------------------------------------------------------------------
-# 📦【2. OS自動判定 ＆ 不足コマンドの自動インストール】
-# ------------------------------------------------------------------------------
-# センサーコマンド(sensors)やディスクI/Oコマンド(vmstat)がない場合のみ自動インストール
+SLEEP_INTERVAL=2
+
+# ==============================================================================
+# 二重起動防止
+# ==============================================================================
+if pgrep -f "$(basename "$0")" | grep -v $$ > /dev/null; then
+    echo "[ERROR] すでに実行中です"
+    exit 1
+fi
+
+# ==============================================================================
+# シグナルトラップ（安全な終了処理）
+# ==============================================================================
+trap 'echo "[INFO] 終了シグナルを受信しました"; exit 0' SIGTERM SIGINT
+
+# ==============================================================================
+# 処理の説明
+# ==============================================================================
+# 1. OS自動判定とパッケージ自動インストール（sensors, sysstat）
+# 2. CPU温度センサーのパターン自動検出（Tctl, Core 0, Package id 0）
+# 3. CSVファイルの初期化（ヘッダー書き込み）
+# 4. メインループ：RAM, Swap, CPU温度, GPU情報, ディスクI/O, トッププロセスを収集
+# ==============================================================================
 if ! command -v sensors &> /dev/null || ! command -v vmstat &> /dev/null; then
     echo "[INFO] 必要なコマンドが足りないため、OSのパッケージ管理を自動判定します..."
     
@@ -84,52 +90,66 @@ if ! command -v sensors &> /dev/null || ! command -v vmstat &> /dev/null; then
     fi
 fi
 
-# ------------------------------------------------------------------------------
-# 🎛️【3. 環境ごとの温度センサー項目名の自動吸収】
-# ------------------------------------------------------------------------------
-# OSやCPUの種類（AMD/Intel）で変わる温度のラベル名（Tctl, Core 0, Package id 0）を自動検出
+# CPU温度センサーのパターン自動検出（AMD/Intel対応）
 TEMP_PATTERN=$(sensors 2>/dev/null | grep -E -o '(Tctl|Core 0|Package id 0)' | head -n 1)
-# 万が一見つからなかった場合の安全弁として Tctl をセット
 [ -z "$TEMP_PATTERN" ] && TEMP_PATTERN="Tctl"
 
-# ------------------------------------------------------------------------------
-# 📊【4. CSVファイルの初期化（ヘッダー書き込み）】
-# ------------------------------------------------------------------------------
+# CSVファイルの初期化（ヘッダー書き込み）
 if [ ! -f "$CSV_FILE" ]; then
-    echo "Timestamp,RAM_Used_MB,RAM_Free_MB,Swap_Used_MB,Swap_Free_MB,CPU_Temp,GPU_Util,VRAM_Util,GPU_Temp,Disk_IO_SR,Top_Process" > "$CSV_FILE"
+    echo "Timestamp,RAM_Used_MB,RAM_Free_MB,Swap_Used_MB,Swap_Free_MB,CPU_Temp,GPU_Util,VRAM_Util,GPU_Temp,Disk_IO_SR,\"Top_Process\",\"Ollama_Model\",Ollama_Mem,Code_Mem,Code_CPU,Ollama_API_Status,Continue_Log" > "$CSV_FILE"
 fi
 
-# ------------------------------------------------------------------------------
-# 🔄【5. メインループ：超軽量・ステルス健康診断記録】
-# ------------------------------------------------------------------------------
-for i in {1..30}; do
+# メインループ：システムリソース収集
+while true; do
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
     
-    # ① RAMとSwap情報（freeコマンドから抽出）
+    # RAMとSwap情報
     FREE_OUT=$(free -m)
     RAM_INFO=$(echo "$FREE_OUT" | grep Mem | awk '{print $3","$4}')
     SWAP_INFO=$(echo "$FREE_OUT" | grep Swap | awk '{print $3","$4}')
     
-    # ② CPU温度（自動検出したパターンで数値を抽出）
+    # CPU温度
     CPU_TEMP=$(sensors 2>/dev/null | grep -E "$TEMP_PATTERN" | head -n 1 | grep -oE '[0-9]+\.[0-9]+' | head -n 1)
     [ -z "$CPU_TEMP" ] && CPU_TEMP="0"
 
-    # ③ GPU情報（nvidia-smiが使える場合のみ取得、使えなければダミーの0をセット）
+    # GPU情報（NVIDIA GPUの場合）
     if command -v nvidia-smi &> /dev/null; then
         GPU_INFO=$(nvidia-smi --query-gpu=utilization.gpu,utilization.memory,temperature.gpu --format=csv,noheader,nounits | sed 's/, /,/g')
     else
         GPU_INFO="0,0,0"
     fi
 
-    # ④ ディスクI/O（vmstatから1秒間のセクタ読み書きの合計値を取得）
+    # とりあえず手間かけずに取れそうなものは取ってみる
+    # ディスクI/O（注: vmstat 1 1 により実際のログ間隔は約3秒）
     DISK_IO=$(vmstat 1 1 | tail -n 1 | awk '{print $9+$10}')
 
-    # ⑤ メモリ消費トップのプロセス名と、そのプロセス単体のメモリ使用率(%)
+    # トッププロセス
     TOP_PROC=$(ps -eo comm,%mem --sort=-%mem | head -n 2 | tail -n 1 | awk '{print $1"("$2"%)"}')
 
-    # カンマで1行に合体させてCSVに追記（プロセス名のカンマをエスケープ）
-    echo "$TIMESTAMP,$RAM_INFO,$SWAP_INFO,$CPU_TEMP,$GPU_INFO,$DISK_IO,\"$TOP_PROC\"" >> "$CSV_FILE"
+    # ollamaモデル情報
+    OLLAMA_MODEL=$(ollama ps 2>/dev/null | grep -v NAME | awk '{print $1","$2","$3}' | head -n 1)
+    [ -z "$OLLAMA_MODEL" ] && OLLAMA_MODEL="0,0,0"
+
+    # プロセスごとの詳細メモリ情報
+    OLLAMA_MEM=$(ps -C ollama -o %mem --no-headers 2>/dev/null | head -n 1)
+    [ -z "$OLLAMA_MEM" ] && OLLAMA_MEM="0"
+    CODE_MEM=$(ps -C code -o %mem --no-headers 2>/dev/null | head -n 1)
+    [ -z "$CODE_MEM" ] && CODE_MEM="0"
+
+    # VSCode/ContinueのCPU使用率
+    CODE_CPU=$(ps -C code -o %cpu --no-headers 2>/dev/null | head -n 1)
+    [ -z "$CODE_CPU" ] && CODE_CPU="0"
+
+    # Ollama APIステータス
+    OLLAMA_API_STATUS=$(curl -s http://localhost:11434/api/ps 2>/dev/null | head -c 100)
+    [ -z "$OLLAMA_API_STATUS" ] && OLLAMA_API_STATUS="0"
+
+    # Continueログファイルから推論情報を抽出
+    CONTINUE_LOG=$(tail -n 5 ~/.config/Continue/logs/*.log 2>/dev/null | grep -i "context\|inference" | tail -n 1 | head -c 50)
+    [ -z "$CONTINUE_LOG" ] && CONTINUE_LOG="0"
+
+    # CSVに追記
+    echo "$TIMESTAMP,$RAM_INFO,$SWAP_INFO,$CPU_TEMP,$GPU_INFO,$DISK_IO,\"$TOP_PROC\",\"$OLLAMA_MODEL\",$OLLAMA_MEM,$CODE_MEM,$CODE_CPU,\"$OLLAMA_API_STATUS\",\"$CONTINUE_LOG\"" >> "$CSV_FILE"
     
-    # 2秒間お休み（休止状態になりCPU負荷を完全にゼロにします）
-    sleep 2
+    sleep $SLEEP_INTERVAL
 done
